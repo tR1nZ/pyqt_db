@@ -11,7 +11,7 @@ from common.variables import *
 from common.utils import *
 from errors import IncorrectDataRecivedError, ReqFieldMissingError, ServerError
 from decos import log
-from metaclasses import ClientMaker
+from practice.metaclasses import ClientMaker
 
 # Инициализация клиентского логера
 logger = logging.getLogger('client_dist')
