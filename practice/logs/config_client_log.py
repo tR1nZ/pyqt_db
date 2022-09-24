@@ -1,3 +1,7 @@
+"""
+Файл содержит конфигурацию логирования для серверной части приложения
+"""
+
 import sys
 import os
 sys.path.append('../')
@@ -14,7 +18,7 @@ path = os.path.join(path, 'client.log')
 # создаём потоки вывода логов
 steam = logging.StreamHandler(sys.stderr)
 steam.setFormatter(client_formatter)
-steam.setLevel(logging.ERROR)
+steam.setLevel(logging.INFO)
 log_file = logging.FileHandler(path, encoding='utf8')
 log_file.setFormatter(client_formatter)
 

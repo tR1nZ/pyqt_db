@@ -1,155 +1,104 @@
-import socket
 import sys
+import os
 import argparse
-import json
 import logging
-import select
-import time
+import configparser
 import logs.config_server_log
-from errors import IncorrectDataRecivedError
+
 from common.variables import *
 from common.utils import *
-from decos import log
+from common.decos import log
+from server.core import MessageProcessor
+from server.database import ServerStorage
+from server.main_window import MainWindow
+from PyQt5.QtWidgets import QApplication
+from PyQt5.QtCore import Qt
 
 # Инициализация логирования сервера.
 logger = logging.getLogger('server_dist')
 
 
-# Обработчик сообщений от клиентов, принимает словарь - сообщение от клиента, проверяет корректность, отправляет
-#     словарь-ответ в случае необходимости.
 @log
-def process_client_message(message, messages_list, client, clients, names):
-    logger.debug(f'Разбор сообщения от клиента : {message}')
-    # Если это сообщение о присутствии, принимаем и отвечаем
-    if ACTION in message and message[ACTION] == PRESENCE and TIME in message and USER in message:
-        # Если такой пользователь ещё не зарегистрирован, регистрируем, иначе отправляем ответ и завершаем соединение.
-        if message[USER][ACCOUNT_NAME] not in names.keys():
-            names[message[USER][ACCOUNT_NAME]] = client
-            send_message(client, RESPONSE_200)
-        else:
-            response = RESPONSE_400
-            response[ERROR] = 'Имя пользователя уже занято.'
-            send_message(client, response)
-            clients.remove(client)
-            client.close()
-        return
-    # Если это сообщение, то добавляем его в очередь сообщений. Ответ не требуется.
-    elif ACTION in message and message[ACTION] == MESSAGE and DESTINATION in message and TIME in message \
-            and SENDER in message and MESSAGE_TEXT in message:
-        messages_list.append(message)
-        return
-    # Если клиент выходит
-    elif ACTION in message and message[ACTION] == EXIT and ACCOUNT_NAME in message:
-        clients.remove(names[ACCOUNT_NAME])
-        names[ACCOUNT_NAME].close()
-        del names[ACCOUNT_NAME]
-        return
-    # Иначе отдаём Bad request
-    else:
-        response = RESPONSE_400
-        response[ERROR] = 'Запрос некорректен.'
-        send_message(client, response)
-        return
-
-
-@log
-# Функция адресной отправки сообщения определённому клиенту. Принимает словарь сообщение, список зарегистрированых
-# пользователей и слушающие сокеты. Ничего не возвращает.
-def process_message(message, names, listen_socks):
-    if message[DESTINATION] in names and names[message[DESTINATION]] in listen_socks:
-        send_message(names[message[DESTINATION]], message)
-        logger.info(f'Отправлено сообщение пользователю {message[DESTINATION]} от пользователя {message[SENDER]}.')
-    elif message[DESTINATION] in names and names[message[DESTINATION]] not in listen_socks:
-        raise ConnectionError
-    else:
-        logger.error(
-            f'Пользователь {message[DESTINATION]} не зарегистрирован на сервере, отправка сообщения невозможна.')
-
-
-# Парсер аргументов коммандной строки.
-@log
-def arg_parser():
+def arg_parser(default_port, default_address):
+    """Парсер аргументов коммандной строки."""
+    logger.debug(
+        f'Инициализация парсера аргументов коммандной строки: {sys.argv}')
     parser = argparse.ArgumentParser()
-    parser.add_argument('-p', default=DEFAULT_PORT, type=int, nargs='?')
-    parser.add_argument('-a', default='', nargs='?')
+    parser.add_argument('-p', default=default_port, type=int, nargs='?')
+    parser.add_argument('-a', default=default_address, nargs='?')
+    parser.add_argument('--no_gui', action='store_true')
     namespace = parser.parse_args(sys.argv[1:])
     listen_address = namespace.a
     listen_port = namespace.p
-
-    # проверка получения корретного номера порта для работы сервера.
-    if not 1023 < listen_port < 65536:
-        logger.critical(
-            f'Попытка запуска сервера с указанием неподходящего порта {listen_port}. Допустимы адреса с 1024 до 65535.')
-        exit(1)
-
-    return listen_address, listen_port
+    gui_flag = namespace.no_gui
+    logger.debug('Аргументы успешно загружены.')
+    return listen_address, listen_port, gui_flag
 
 
+@log
+def config_load():
+    """Парсер конфигурационного ini файла."""
+    config = configparser.ConfigParser()
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    config.read(f"{dir_path}/{'server_dist+++.ini'}")
+    # Если конфиг файл загружен правильно, запускаемся, иначе конфиг по
+    # умолчанию.
+    if 'SETTINGS' in config:
+        return config
+    else:
+        config.add_section('SETTINGS')
+        config.set('SETTINGS', 'Default_port', str(DEFAULT_PORT))
+        config.set('SETTINGS', 'Listen_Address', '')
+        config.set('SETTINGS', 'Database_path', '')
+        config.set('SETTINGS', 'Database_file', 'server_database.db3')
+        return config
+
+
+@log
 def main():
-    # Загрузка параметров командной строки, если нет параметров, то задаём значения по умоланию.
-    listen_address, listen_port = arg_parser()
+    '''Основная функция'''
+    # Загрузка файла конфигурации сервера
+    config = config_load()
 
-    logger.info(
-        f'Запущен сервер, порт для подключений: {listen_port} , '
-        f'адрес с которого принимаются подключения: {listen_address}. '
-        f'Если адрес не указан, принимаются соединения с любых адресов.')
-    # Готовим сокет
-    transport = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    transport.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    transport.bind((listen_address, listen_port))
-    transport.settimeout(0.5)
+    # Загрузка параметров командной строки, если нет параметров, то задаём
+    # значения по умоланию.
+    listen_address, listen_port, gui_flag = arg_parser(
+        config['SETTINGS']['Default_port'], config['SETTINGS']['Listen_Address'])
 
-    # список клиентов , очередь сообщений
-    clients = []
-    messages = []
+    # Инициализация базы данных
+    database = ServerStorage(
+        os.path.join(
+            config['SETTINGS']['Database_path'],
+            config['SETTINGS']['Database_file']))
 
-    # Словарь, содержащий имена пользователей и соответствующие им сокеты.
-    names = dict()
+    # Создание экземпляра класса - сервера и его запуск:
+    server = MessageProcessor(listen_address, listen_port, database)
+    server.daemon = True
+    server.start()
 
-    # Слушаем порт
-    transport.listen(MAX_CONNECTIONS)
-    # Основной цикл программы сервера
-    while True:
-        # Ждём подключения, если таймаут вышел, ловим исключение.
-        try:
-            client, client_address = transport.accept()
-        except OSError:
-            pass
-        else:
-            logger.info(f'Установлено соедение с ПК {client_address}')
-            clients.append(client)
+    # Если  указан параметр без GUI то запускаем простенький обработчик
+    # консольного ввода
+    if gui_flag:
+        while True:
+            command = input('Введите exit для завершения работы сервера.')
+            if command == 'exit':
+                # Если выход, то завршаем основной цикл сервера.
+                server.running = False
+                server.join()
+                break
 
-        recv_data_lst = []
-        send_data_lst = []
-        err_lst = []
-        # Проверяем на наличие ждущих клиентов
-        try:
-            if clients:
-                recv_data_lst, send_data_lst, err_lst = select.select(clients, clients, [], 0)
-        except OSError:
-            pass
+    # Если не указан запуск без GUI, то запускаем GUI:
+    else:
+        # Создаём графическое окуружение для сервера:
+        server_app = QApplication(sys.argv)
+        server_app.setAttribute(Qt.AA_DisableWindowContextHelpButton)
+        main_window = MainWindow(database, server, config)
 
-        # принимаем сообщения и если ошибка, исключаем клиента.
-        if recv_data_lst:
-            for client_with_message in recv_data_lst:
-                try:
-                    process_client_message(get_message(client_with_message), messages, client_with_message, clients,
-                                           names)
-                except Exception as e:
-                    print(e)
-                    logger.info(f'Клиент {client_with_message.getpeername()} отключился от сервера.')
-                    clients.remove(client_with_message)
+        # Запускаем GUI
+        server_app.exec_()
 
-        # Если есть сообщения, обрабатываем каждое.
-        for i in messages:
-            try:
-                process_message(i, names, send_data_lst)
-            except Exception as e:
-                print(e)
-                logger.info(f'Связь с клиентом с именем {i[DESTINATION]} была потеряна')
-                clients.remove(names[i[DESTINATION]])
-                del names[i[DESTINATION]]
-        messages.clear()
+        # По закрытию окон останавливаем обработчик сообщений
+        server.running = False
 
 
 if __name__ == '__main__':
