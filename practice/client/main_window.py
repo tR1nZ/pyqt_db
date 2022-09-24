@@ -6,9 +6,7 @@ from Cryptodome.PublicKey import RSA
 import json
 import logging
 import base64
-import sys
 
-sys.path.append('../')
 from client.main_window_conv import Ui_MainClientWindow
 from client.add_contact import AddContactDialog
 from client.del_contact import DelContactDialog

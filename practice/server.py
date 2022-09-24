@@ -82,14 +82,14 @@ def main():
         while True:
             command = input('Введите exit для завершения работы сервера.')
             if command == 'exit':
-                # Если выход, то завершаем основной цикл сервера.
+                # Если выход, то завршаем основной цикл сервера.
                 server.running = False
                 server.join()
                 break
 
     # Если не указан запуск без GUI, то запускаем GUI:
     else:
-        # Создаём графическое окружение для сервера:
+        # Создаём графическое окуружение для сервера:
         server_app = QApplication(sys.argv)
         server_app.setAttribute(Qt.AA_DisableWindowContextHelpButton)
         main_window = MainWindow(database, server, config)

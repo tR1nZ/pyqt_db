@@ -48,7 +48,6 @@ class MessageProcessor(threading.Thread):
         self.running = True
 
         # Словарь содержащий сопоставленные имена и соответствующие им сокеты.
-        # {'test1': <socket.socket fd=25, family=AddressFamily.AF_INET, type=SocketKind.SOCK_STREAM, proto=0, laddr=('127.0.0.1', 7777), raddr=('127.0.0.1', 52420)>}
         self.names = dict()
 
         # Конструктор предка
@@ -112,7 +111,6 @@ class MessageProcessor(threading.Thread):
             f'Запущен сервер, порт для подключений: {self.port} , адрес с которого принимаются подключения: {self.addr}. Если адрес не указан, принимаются соединения с любых адресов.')
         # Готовим сокет
         transport = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        transport.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         transport.bind((self.addr, self.port))
         transport.settimeout(0.5)
 
@@ -292,16 +290,16 @@ class MessageProcessor(threading.Thread):
             client_digest = binascii.a2b_base64(ans[DATA])
             # Если ответ клиента корректный, то сохраняем его в список
             # пользователей.
-            if RESPONSE in ans and ans[RESPONSE] == 511 and \
-                    hmac.compare_digest(digest, client_digest):
+            if RESPONSE in ans and ans[RESPONSE] == 511 and hmac.compare_digest(
+                    digest, client_digest):
                 self.names[message[USER][ACCOUNT_NAME]] = sock
                 client_ip, client_port = sock.getpeername()
                 try:
                     send_message(sock, RESPONSE_200)
                 except OSError:
                     self.remove_client(message[USER][ACCOUNT_NAME])
-                # добавляем пользователя в список активных и,
-                # если у него изменился открытый ключ, то сохраняем новый
+                # добавляем пользователя в список активных и если у него изменился открытый ключ
+                # сохраняем новый
                 self.database.user_login(
                     message[USER][ACCOUNT_NAME],
                     client_ip,

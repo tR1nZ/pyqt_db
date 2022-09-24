@@ -56,7 +56,7 @@ if __name__ == '__main__':
     # Создаём клиентокое приложение
     client_app = QApplication(sys.argv)
 
-    # Если имя пользователя не было указано в командной строке, то запросим его
+    # Если имя пользователя не было указано в командной строке то запросим его
     start_dialog = UserNameDialog()
     if not client_name or not client_passwd:
         client_app.exec_()
